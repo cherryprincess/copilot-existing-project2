@@ -7,6 +7,11 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
 env:
   REGISTRY: ${{ secrets.AZURE_CONTAINER_REGISTRY }}
   IMAGE_NAME: flask-app
@@ -117,7 +122,7 @@ jobs:
         platforms: linux/amd64
 
     - name: Upload Trivy scan results
-      uses: github/codeql-action/upload-sarif@v2
+      uses: github/codeql-action/upload-sarif@v3
       if: always()
       with:
         sarif_file: 'trivy-results.sarif'
@@ -190,6 +195,26 @@ jobs:
         
         # Test the service
         kubectl run test-pod --image=curlimages/curl:latest --rm -i --restart=Never -n ${{ env.NAMESPACE }} -- curl -f http://flask-app-service/
+
+    - name: Run performance tests (optional)
+      run: |
+        # Port forward for local testing
+        kubectl port-forward service/flask-app-service 8080:80 -n ${{ env.NAMESPACE }} &
+        PF_PID=$!
+        
+        # Wait for port forward to be ready
+        sleep 10
+        
+        # Basic performance test
+        echo "Running basic performance test..."
+        for i in {1..10}; do
+          curl -f http://localhost:8080/ || echo "Request $i failed"
+          sleep 1
+        done
+        
+        # Clean up port forward
+        kill $PF_PID || true
+      continue-on-error: true
 
     - name: Clean up old images (optional)
       run: |
