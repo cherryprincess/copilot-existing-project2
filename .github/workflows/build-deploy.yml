@@ -1,0 +1,151 @@
+name: Build and Deploy to AKS
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  REGISTRY: your-registry.azurecr.io
+  IMAGE_NAME: flask-app
+  AKS_CLUSTER_NAME: your-aks-cluster
+  AKS_RESOURCE_GROUP: your-resource-group
+  NAMESPACE: flask-app-namespace
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+      image-digest: ${{ steps.build.outputs.digest }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Azure Container Registry
+      uses: azure/docker-login@v1
+      with:
+        login-server: ${{ env.REGISTRY }}
+        username: ${{ secrets.REGISTRY_USERNAME }}
+        password: ${{ secrets.REGISTRY_PASSWORD }}
+
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=sha,prefix={{branch}}-
+          type=raw,value=build-${{ github.run_number }}
+          type=raw,value=latest,enable={{is_default_branch}}
+
+    - name: Build and push Docker image
+      id: build
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./Dockerfile
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        platforms: linux/amd64
+
+    - name: Install Trivy
+      run: |
+        sudo apt-get update && \
+        sudo apt-get install -y wget apt-transport-https gnupg lsb-release && \
+        wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add - && \
+        echo deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main | sudo tee -a /etc/apt/sources.list.d/trivy.list && \
+        sudo apt-get update && \
+        sudo apt-get install -y trivy
+
+    - name: Scan Docker image for vulnerabilities
+      uses: aquasecurity/trivy-action@0.28.0
+      with:
+        image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:build-${{ github.run_number }}
+        format: table
+        exit-code: 1
+        ignore-unfixed: true
+        severity: CRITICAL,HIGH
+
+    - name: Generate Trivy SARIF report
+      uses: aquasecurity/trivy-action@0.28.0
+      with:
+        image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:build-${{ github.run_number }}
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+      if: always()
+
+    - name: Upload Trivy scan results
+      uses: github/codeql-action/upload-sarif@v2
+      if: always()
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Set up kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'latest'
+
+    - name: Get AKS credentials
+      uses: azure/aks-set-context@v3
+      with:
+        resource-group: ${{ env.AKS_RESOURCE_GROUP }}
+        cluster-name: ${{ env.AKS_CLUSTER_NAME }}
+
+    - name: Create namespace if not exists
+      run: |
+        kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
+
+    - name: Deploy to AKS
+      run: |
+        # Replace image tag in deployment file
+        sed -i "s|image: flask-app:secure|image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:build-${{ github.run_number }}|g" k8s-complete-deployment.yaml
+        
+        # Replace namespace in deployment file
+        sed -i "s|namespace: flask-app-namespace|namespace: ${{ env.NAMESPACE }}|g" k8s-complete-deployment.yaml
+        
+        # Apply the deployment
+        kubectl apply -f k8s-complete-deployment.yaml
+
+    - name: Verify deployment
+      run: |
+        kubectl rollout status deployment/flask-app-deployment -n ${{ env.NAMESPACE }}
+        kubectl get services -n ${{ env.NAMESPACE }}
+
+    - name: Run deployment tests
+      run: |
+        # Wait for deployment to be ready
+        kubectl wait --for=condition=ready pod -l app=flask-app -n ${{ env.NAMESPACE }} --timeout=300s
+        
+        # Test the service
+        kubectl run test-pod --image=curlimages/curl:latest --rm -i --restart=Never -n ${{ env.NAMESPACE }} -- curl -f http://flask-app-service/
+
+    - name: Clean up old images (optional)
+      run: |
+        # Keep only last 5 images
+        az acr repository show-tags --name ${REGISTRY%%.azurecr.io} --repository ${{ env.IMAGE_NAME }} --orderby time_desc --output tsv | tail -n +6 | xargs -I {} az acr repository delete --name ${REGISTRY%%.azurecr.io} --image ${{ env.IMAGE_NAME }}:{} --yes || true
