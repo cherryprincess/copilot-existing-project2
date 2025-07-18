@@ -67,15 +67,15 @@ jobs:
           type=raw,value=build-${{ github.run_number }}
           type=raw,value=latest,enable={{is_default_branch}}
 
-    - name: Build and push Docker image
-      id: build
+    - name: Build Docker image locally
+      id: build-local
       uses: docker/build-push-action@v5
       with:
         context: .
         file: ./Dockerfile
-        push: true
-        tags: ${{ steps.meta.outputs.tags }}
-        labels: ${{ steps.meta.outputs.labels }}
+        push: false
+        load: true
+        tags: ${{ env.IMAGE_NAME }}:build-${{ github.run_number }}
         platforms: linux/amd64
 
     - name: Install Trivy
@@ -90,7 +90,7 @@ jobs:
     - name: Scan Docker image for vulnerabilities
       uses: aquasecurity/trivy-action@0.28.0
       with:
-        image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:build-${{ github.run_number }}
+        image-ref: ${{ env.IMAGE_NAME }}:build-${{ github.run_number }}
         format: table
         exit-code: 1
         ignore-unfixed: true
@@ -99,10 +99,21 @@ jobs:
     - name: Generate Trivy SARIF report
       uses: aquasecurity/trivy-action@0.28.0
       with:
-        image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:build-${{ github.run_number }}
+        image-ref: ${{ env.IMAGE_NAME }}:build-${{ github.run_number }}
         format: 'sarif'
         output: 'trivy-results.sarif'
       if: always()
+
+    - name: Push Docker image to registry
+      id: build
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./Dockerfile
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        platforms: linux/amd64
 
     - name: Upload Trivy scan results
       uses: github/codeql-action/upload-sarif@v2
