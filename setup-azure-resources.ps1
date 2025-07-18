@@ -50,13 +50,13 @@ Write-Host "Setup completed!" -ForegroundColor Green
 Write-Host ""
 Write-Host "=== GitHub Secrets to Configure ===" -ForegroundColor Cyan
 Write-Host "AZURE_CREDENTIALS: $SP_JSON"
+Write-Host "AZURE_CONTAINER_REGISTRY: $ACR_NAME.azurecr.io"
 Write-Host "REGISTRY_USERNAME: $ACR_USERNAME"
 Write-Host "REGISTRY_PASSWORD: $ACR_PASSWORD"
-Write-Host ""
-Write-Host "=== Update workflow variables ===" -ForegroundColor Cyan
-Write-Host "REGISTRY: $ACR_NAME.azurecr.io"
 Write-Host "AKS_CLUSTER_NAME: $AKS_CLUSTER_NAME"
 Write-Host "AKS_RESOURCE_GROUP: $RESOURCE_GROUP"
+Write-Host ""
+Write-Host "=== Workflow Environment Variables (automatically configured) ===" -ForegroundColor Cyan
 Write-Host "NAMESPACE: $NAMESPACE"
 Write-Host ""
 Write-Host "=== Next Steps ===" -ForegroundColor Magenta

@@ -8,10 +8,10 @@ on:
   workflow_dispatch:
 
 env:
-  REGISTRY: your-registry.azurecr.io
+  REGISTRY: ${{ secrets.AZURE_CONTAINER_REGISTRY }}
   IMAGE_NAME: flask-app
-  AKS_CLUSTER_NAME: your-aks-cluster
-  AKS_RESOURCE_GROUP: your-resource-group
+  AKS_CLUSTER_NAME: ${{ secrets.AKS_CLUSTER_NAME }}
+  AKS_RESOURCE_GROUP: ${{ secrets.AKS_RESOURCE_GROUP }}
   NAMESPACE: flask-app-namespace
 
 jobs:
@@ -24,6 +24,23 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+
+    - name: Validate required secrets
+      run: |
+        if [ -z "${{ secrets.AZURE_CONTAINER_REGISTRY }}" ]; then
+          echo "ERROR: AZURE_CONTAINER_REGISTRY secret is not set"
+          echo "Please add your ACR URL (e.g., myregistry.azurecr.io) to GitHub secrets"
+          exit 1
+        fi
+        if [ -z "${{ secrets.REGISTRY_USERNAME }}" ]; then
+          echo "ERROR: REGISTRY_USERNAME secret is not set"
+          exit 1
+        fi
+        if [ -z "${{ secrets.REGISTRY_PASSWORD }}" ]; then
+          echo "ERROR: REGISTRY_PASSWORD secret is not set"
+          exit 1
+        fi
+        echo "All required secrets are configured"
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
@@ -101,6 +118,22 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+
+    - name: Validate deployment secrets
+      run: |
+        if [ -z "${{ secrets.AKS_CLUSTER_NAME }}" ]; then
+          echo "ERROR: AKS_CLUSTER_NAME secret is not set"
+          exit 1
+        fi
+        if [ -z "${{ secrets.AKS_RESOURCE_GROUP }}" ]; then
+          echo "ERROR: AKS_RESOURCE_GROUP secret is not set"
+          exit 1
+        fi
+        if [ -z "${{ secrets.AZURE_CREDENTIALS }}" ]; then
+          echo "ERROR: AZURE_CREDENTIALS secret is not set"
+          exit 1
+        fi
+        echo "All deployment secrets are configured"
 
     - name: Azure Login
       uses: azure/login@v1
